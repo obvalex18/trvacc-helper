@@ -8,43 +8,32 @@ import logging
 from itertools import cycle
 
 # ================== CONFIG ==================
-
-# DISCORD TOKEN (ENV VARIABLE)
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("DISCORD_TOKEN environment variable not set")
 
-# ROLE ID allowed to manage events
-EVENTS_ADMIN_ROLE_ID = 1269705468876554421  # CHANGE THIS
-
-# CHANNEL where announcements/reminders are sent
-ANNOUNCEMENT_CHANNEL_ID = 1463247462952337510  # CHANGE THIS
-
+EVENTS_ADMIN_ROLE_ID = 123456789012345678  # CHANGE THIS
+ANNOUNCEMENT_CHANNEL_ID = 123456789012345678  # CHANGE THIS
 EVENTS_FILE = "events.json"
 
-EMBED_COLOR = 0x08B4CA
+EMBED_COLORS = [0x08B4CA, 0x1A5DAB, 0xBC9B6A, 0x4A90E2]  # colors for embed rotation
 FOOTER_TEXT = "TRvACC Helper • Made by Alex - 1715580 for Türkiye vACC (VATSIM)"
 
 # ================== LOGGING ==================
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-# ================== DISCORD SETUP ==================
-
+# ================== DISCORD ==================
 intents = discord.Intents.default()
+intents.guilds = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
 # ================== STATUS ROTATION ==================
-
 STATUSES = [
     Activity(type=ActivityType.watching, name="TRvACC events"),
-    Activity(type=ActivityType.watching, name="Turkish airspace"),
-    Activity(type=ActivityType.playing, name="on VATSIM Türkiye"),
+    Activity(type=ActivityType.playing, name="with controllers"),
     Activity(type=ActivityType.listening, name="event briefings"),
+    Activity(type=ActivityType.watching, name="VATSIM Türkiye"),
 ]
 
 status_cycle = cycle(STATUSES)
@@ -54,7 +43,6 @@ async def rotate_status():
     await client.change_presence(activity=next(status_cycle))
 
 # ================== STORAGE ==================
-
 def load_events():
     if not os.path.exists(EVENTS_FILE):
         return []
@@ -66,48 +54,45 @@ def save_events(events):
         json.dump(events, f, indent=2)
 
 # ================== HELPERS ==================
-
 def is_events_admin(interaction: discord.Interaction) -> bool:
     return any(role.id == EVENTS_ADMIN_ROLE_ID for role in interaction.user.roles)
 
 def make_event_embed(event, prefix="📅 Event"):
+    color = EMBED_COLORS[event["id"] % len(EMBED_COLORS)]
     embed = discord.Embed(
         title=f"{prefix}: {event['name']}",
         description=event["description"],
-        color=EMBED_COLOR
+        color=color
     )
     embed.add_field(name="🕒 Start (UTC)", value=event["start"], inline=True)
     embed.add_field(name="🕓 End (UTC)", value=event["end"], inline=True)
     embed.add_field(name="🆔 Event ID", value=str(event["id"]), inline=True)
+    if event.get("positions"):
+        pos_text = "\n".join(f"{pos}: {user}" for pos, user in event["positions"].items())
+        embed.add_field(name="🧑‍✈️ Signups", value=pos_text or "No signups yet", inline=False)
     embed.set_footer(text=FOOTER_TEXT)
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
-# ================== REMINDER TASK ==================
-
+# ================== REMINDERS ==================
 @tasks.loop(minutes=1)
 async def reminder_task():
     now = datetime.now(timezone.utc)
     events = load_events()
     updated = False
-
     for event in events:
         if event.get("cancelled"):
             continue
-
         start = datetime.fromisoformat(event["start"])
         delta = start - now
-
         if not event.get("reminded_24h") and timedelta(hours=23, minutes=59) < delta < timedelta(hours=24, minutes=1):
             await announce_event(event, "⏰ Event starts in 24 hours")
             event["reminded_24h"] = True
             updated = True
-
         if not event.get("reminded_1h") and timedelta(minutes=59) < delta < timedelta(hours=1, minutes=1):
             await announce_event(event, "⏰ Event starts in 1 hour")
             event["reminded_1h"] = True
             updated = True
-
     if updated:
         save_events(events)
 
@@ -117,27 +102,20 @@ async def announce_event(event, prefix):
         await channel.send(embed=make_event_embed(event, prefix))
 
 # ================== EVENTS ==================
-
 @client.event
 async def on_ready():
     logging.info(f"Logged in as {client.user}")
-
     if not rotate_status.is_running():
         rotate_status.start()
-
     if not reminder_task.is_running():
         reminder_task.start()
-
     await tree.sync()
     logging.info("Slash commands synced")
 
-# ================== SLASH COMMANDS ==================
-
+# ================== COMMANDS ==================
 @tree.command(name="ping", description="Check bot latency")
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        f"🏓 Pong! `{round(client.latency * 1000)}ms`"
-    )
+    await interaction.response.send_message(f"🏓 Pong! `{round(client.latency * 1000)}ms`")
 
 @tree.command(name="help", description="Show bot help")
 async def help_cmd(interaction: discord.Interaction):
@@ -145,8 +123,9 @@ async def help_cmd(interaction: discord.Interaction):
         "**TRvACC Events Assistant**\n"
         "`/event_list` – List upcoming events\n"
         "`/event_info <id>` – Event details\n"
-        "`/event_create` – Create event (Events Dept)\n"
-        "`/event_delete <id>` – Delete event (Events Dept)\n"
+        "`/event_create` – Create event (Admin only)\n"
+        "`/event_delete <id>` – Delete event (Admin only)\n"
+        "`/event_signup <event_id> <position>` – Register for a position\n"
         "`/ping` – Bot latency"
     )
 
@@ -156,7 +135,6 @@ async def event_list(interaction: discord.Interaction):
     if not events:
         await interaction.response.send_message("No upcoming events.")
         return
-
     text = "\n".join(f"**{e['id']}** — {e['name']} ({e['start']} UTC)" for e in events)
     await interaction.response.send_message(text)
 
@@ -168,52 +146,78 @@ async def event_info(interaction: discord.Interaction, event_id: int):
             return
     await interaction.response.send_message("❌ Event not found.")
 
-@tree.command(name="event_create", description="Create an event (Events Dept only)")
+@tree.command(name="event_create", description="Create an event (Admin only)")
 async def event_create(
     interaction: discord.Interaction,
     name: str,
-    start_utc: str,
-    end_utc: str,
+    date: str,        # YYYY-MM-DD
+    start_time: str,  # HH:MM UTC
+    end_time: str,    # HH:MM UTC
     description: str
 ):
     if not is_events_admin(interaction):
-        await interaction.response.send_message("❌ You are not allowed to do this.", ephemeral=True)
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
         return
-
+    try:
+        start_dt = datetime.fromisoformat(f"{date}T{start_time}:00+00:00")
+        end_dt = datetime.fromisoformat(f"{date}T{end_time}:00+00:00")
+        if end_dt <= start_dt:
+            raise ValueError("End before start")
+    except Exception:
+        await interaction.response.send_message(
+            "❌ Invalid date/time format.\nUse:\n`date`: YYYY-MM-DD\n`start_time`: HH:MM UTC\n`end_time`: HH:MM UTC",
+            ephemeral=True
+        )
+        return
     events = load_events()
     event_id = max([e["id"] for e in events], default=0) + 1
-
     event = {
         "id": event_id,
         "name": name,
-        "start": start_utc,
-        "end": end_utc,
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
         "description": description,
-        "cancelled": False
+        "cancelled": False,
+        "positions": {}  # key=position, value=username
     }
-
     events.append(event)
     save_events(events)
+    await interaction.response.send_message("✅ Event created.", embed=make_event_embed(event))
 
-    await interaction.response.send_message(
-        "✅ Event created successfully.",
-        embed=make_event_embed(event)
-    )
-
-@tree.command(name="event_delete", description="Delete an event (Events Dept only)")
+@tree.command(name="event_delete", description="Delete an event (Admin only)")
 async def event_delete(interaction: discord.Interaction, event_id: int):
     if not is_events_admin(interaction):
-        await interaction.response.send_message("❌ You are not allowed to do this.", ephemeral=True)
+        await interaction.response.send_message("❌ No permission.", ephemeral=True)
         return
-
     events = load_events()
     events = [e for e in events if e["id"] != event_id]
     save_events(events)
-
     await interaction.response.send_message("🗑️ Event deleted.")
 
-# ================== ERROR HANDLER ==================
+@tree.command(name="event_signup", description="Sign up for a position in an event")
+async def event_signup(interaction: discord.Interaction, event_id: int, position: str):
+    events = load_events()
+    for event in events:
+        if event["id"] == event_id:
+            # Register user
+            event["positions"][position] = interaction.user.display_name
+            save_events(events)
+            await interaction.response.send_message(f"✅ Registered **{interaction.user.display_name}** for **{position}**.", ephemeral=True)
+            # Update persistent embed if in announcement channel
+            channel = client.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+            if channel:
+                msg = await channel.fetch_message(event.get("announcement_msg_id")) if event.get("announcement_msg_id") else None
+                embed = make_event_embed(event)
+                if msg:
+                    await msg.edit(embed=embed)
+                else:
+                    sent = await channel.send(embed=embed)
+                    event["announcement_msg_id"] = sent.id
+                    save_events(events)
+            return
+    await interaction.response.send_message("❌ Event not found.", ephemeral=True)
 
+# ================== ERROR HANDLER ==================
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
     logging.error(error)
@@ -223,5 +227,4 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
 
 # ================== RUN ==================
-
 client.run(BOT_TOKEN)
