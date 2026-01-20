@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands, Activity, ActivityType
 from discord.ext import tasks
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import os
 import logging
@@ -12,8 +12,8 @@ BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("DISCORD_TOKEN environment variable not set")
 
-EVENTS_ADMIN_ROLE_ID = 1269705468876554421  # CHANGE THIS
-ANNOUNCEMENT_CHANNEL_ID = 1463247462952337510  # CHANGE THIS
+EVENTS_ADMIN_ROLE_ID = 123456789012345678  # CHANGE THIS
+ANNOUNCEMENT_CHANNEL_ID = 123456789012345678  # CHANGE THIS
 EVENTS_FILE = "events.json"
 
 EMBED_COLORS = [0x08B4CA, 0x1A5DAB, 0xBC9B6A, 0x4A90E2]  # colors for embed rotation
@@ -64,8 +64,13 @@ def make_event_embed(event, prefix="📅 Event"):
         description=event["description"],
         color=color
     )
-    embed.add_field(name="🕒 Start (UTC)", value=event["start"], inline=True)
-    embed.add_field(name="🕓 End (UTC)", value=event["end"], inline=True)
+    # Format dates nicely
+    start_dt = datetime.fromisoformat(event["start"])
+    end_dt = datetime.fromisoformat(event["end"])
+    start_str = start_dt.strftime("%a, %d %b %Y %H:%M UTC")
+    end_str = end_dt.strftime("%a, %d %b %Y %H:%M UTC")
+    embed.add_field(name="🕒 Start (UTC)", value=start_str, inline=True)
+    embed.add_field(name="🕓 End (UTC)", value=end_str, inline=True)
     embed.add_field(name="🆔 Event ID", value=str(event["id"]), inline=True)
     if event.get("positions"):
         pos_text = "\n".join(f"{pos}: {user}" for pos, user in event["positions"].items())
@@ -74,41 +79,12 @@ def make_event_embed(event, prefix="📅 Event"):
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
-# ================== REMINDERS ==================
-@tasks.loop(minutes=1)
-async def reminder_task():
-    now = datetime.now(timezone.utc)
-    events = load_events()
-    updated = False
-    for event in events:
-        if event.get("cancelled"):
-            continue
-        start = datetime.fromisoformat(event["start"])
-        delta = start - now
-        if not event.get("reminded_24h") and timedelta(hours=23, minutes=59) < delta < timedelta(hours=24, minutes=1):
-            await announce_event(event, "⏰ Event starts in 24 hours")
-            event["reminded_24h"] = True
-            updated = True
-        if not event.get("reminded_1h") and timedelta(minutes=59) < delta < timedelta(hours=1, minutes=1):
-            await announce_event(event, "⏰ Event starts in 1 hour")
-            event["reminded_1h"] = True
-            updated = True
-    if updated:
-        save_events(events)
-
-async def announce_event(event, prefix):
-    channel = client.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-    if channel:
-        await channel.send(embed=make_event_embed(event, prefix))
-
 # ================== EVENTS ==================
 @client.event
 async def on_ready():
     logging.info(f"Logged in as {client.user}")
     if not rotate_status.is_running():
         rotate_status.start()
-    if not reminder_task.is_running():
-        reminder_task.start()
     await tree.sync()
     logging.info("Slash commands synced")
 
@@ -135,7 +111,7 @@ async def event_list(interaction: discord.Interaction):
     if not events:
         await interaction.response.send_message("No upcoming events.")
         return
-    text = "\n".join(f"**{e['id']}** — {e['name']} ({e['start']} UTC)" for e in events)
+    text = "\n".join(f"**{e['id']}** — {e['name']} ({datetime.fromisoformat(e['start']).strftime('%d %b %Y %H:%M UTC')})" for e in events)
     await interaction.response.send_message(text)
 
 @tree.command(name="event_info", description="Get event details")
@@ -203,7 +179,7 @@ async def event_signup(interaction: discord.Interaction, event_id: int, position
             event["positions"][position] = interaction.user.display_name
             save_events(events)
             await interaction.response.send_message(f"✅ Registered **{interaction.user.display_name}** for **{position}**.", ephemeral=True)
-            # Update persistent embed if in announcement channel
+            # Update persistent embed
             channel = client.get_channel(ANNOUNCEMENT_CHANNEL_ID)
             if channel:
                 msg = await channel.fetch_message(event.get("announcement_msg_id")) if event.get("announcement_msg_id") else None
@@ -227,4 +203,6 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
 
 # ================== RUN ==================
-client.run(BOT_TOKEN)
+if __name__ == "__main__":
+    rotate_status.start()
+    client.run(BOT_TOKEN)
