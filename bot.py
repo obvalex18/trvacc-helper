@@ -20,9 +20,8 @@ EVENTS_FILE = "events.json"
 EMBED_COLORS = [0x08B4CA, 0x1A5DAB, 0xBC9B6A, 0x4A90E2]
 FOOTER_TEXT = "TRvACC Helper • Made by Alex - 1715580 for Türkiye vACC (VATSIM)"
 
-AISWEB_API_KEY = "1695390440"
-AISWEB_API_PASS = "7cfa2aa4-ee67-11f0-a4e0-0050569ac2e1"
-AISWEB_BASE = "http://www.aisweb.aer.mil.br/api"
+AVWX_TOKEN = "qA5UcDtDcemHtS5Ex5Jb7xrHmueYKusLBPugNRE562Y"
+AVWX_BASE = "https://avwx.rest/api"
 # ================== LOGGING ==================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
@@ -84,19 +83,31 @@ def make_event_embed(event, prefix="📅 Event"):
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
-async def fetch_weather(icao: str):
+import aiohttp
+
+async def fetch_metar_taf(icao: str):
     headers = {
-        "x-api-key": AISWEB_API_KEY,
-        "x-api-pass": AISWEB_API_PASS
+        "Authorization": AVWX_TOKEN
     }
 
-    url = f"{AISWEB_BASE}/?icao={icao}&api=metar,taf"
+    timeout = aiohttp.ClientTimeout(total=10)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                return None
-            return await resp.json()
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+
+        metar_url = f"{AVWX_BASE}/metar/{icao}?format=json"
+        taf_url = f"{AVWX_BASE}/taf/{icao}?format=json"
+
+        metar_data, taf_data = None, None
+
+        async with session.get(metar_url, headers=headers) as r1:
+            if r1.status == 200:
+                metar_data = await r1.json()
+
+        async with session.get(taf_url, headers=headers) as r2:
+            if r2.status == 200:
+                taf_data = await r2.json()
+
+        return metar_data, taf_data
 # ================== EVENTS ==================
 @client.event
 async def on_ready():
@@ -262,50 +273,47 @@ async def event_remove(interaction: discord.Interaction, event_id: int, position
                 return
     await interaction.response.send_message("❌ Event not found. (ERR008)", ephemeral=True)
 
-@tree.command(name="weather", description="Get METAR/TAF for an airport")
+@tree.command(name="weather", description="Get METAR/TAF (AVWX)")
 async def weather(interaction: discord.Interaction, icao: str):
 
     await interaction.response.defer()
 
     try:
-        url = f"http://www.aisweb.aer.mil.br/api/?icao={icao.upper()}"
+        metar, taf = await fetch_metar_taf(icao.upper())
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                text = await resp.text()
-
-                if resp.status != 200:
-                    return await interaction.followup.send(
-                        f"❌ API error ({resp.status}) (ERR010)"
-                    )
-
-        # Try JSON first
-        try:
-            data = json.loads(text)
-        except:
+        if not metar and not taf:
             return await interaction.followup.send(
-                f"❌ Invalid API response (ERR011)\n```{text[:300]}```"
+                f"❌ No weather data found for {icao.upper()} (ERR010)"
             )
 
-        metar = data.get("metar", "N/A")
-        taf = data.get("taf", "N/A")
+        metar_str = metar.get("raw", "N/A") if metar else "N/A"
+        taf_str = taf.get("raw", "N/A") if taf else "N/A"
 
         embed = discord.Embed(
             title=f"🌦️ Weather — {icao.upper()}",
             color=0x08B4CA
         )
 
-        embed.add_field(name="METAR", value=f"```{metar}```", inline=False)
-        embed.add_field(name="TAF", value=f"```{taf}```", inline=False)
+        embed.add_field(
+            name="METAR",
+            value=f"```{metar_str}```",
+            inline=False
+        )
+
+        embed.add_field(
+            name="TAF",
+            value=f"```{taf_str}```",
+            inline=False
+        )
+
         embed.set_footer(text=FOOTER_TEXT)
 
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
         await interaction.followup.send(
-            f"❌ Unexpected error (ERR012)\n```{e}```"
-        )
-    # ---- extract safely (API structure may vary slightly) ----
+            f"❌ Weather system error (ERR012)\n```{e}```"
+        )    # ---- extract safely (API structure may vary slightly) ----
     metar = data.get("metar", "No METAR available")
     taf = data.get("taf", "No TAF available")
 
