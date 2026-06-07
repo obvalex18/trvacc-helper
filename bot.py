@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 # ================== DISCORD ==================
 intents = discord.Intents.default()
 intents.guilds = True
-intents.members = True
+intents.members = False
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
