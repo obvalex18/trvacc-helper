@@ -6,6 +6,7 @@ import json
 import os
 import logging
 from itertools import cycle
+import aiohttp
 
 # ================== CONFIG ==================
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -19,6 +20,9 @@ EVENTS_FILE = "events.json"
 EMBED_COLORS = [0x08B4CA, 0x1A5DAB, 0xBC9B6A, 0x4A90E2]
 FOOTER_TEXT = "TRvACC Helper • Made by Alex - 1715580 for Türkiye vACC (VATSIM)"
 
+AISWEB_API_KEY = "1695390440"
+AISWEB_API_PASS = "7cfa2aa4-ee67-11f0-a4e0-0050569ac2e1"
+AISWEB_BASE = "http://www.aisweb.aer.mil.br/api"
 # ================== LOGGING ==================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
@@ -80,6 +84,19 @@ def make_event_embed(event, prefix="📅 Event"):
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
+async def fetch_weather(icao: str):
+    headers = {
+        "x-api-key": AISWEB_API_KEY,
+        "x-api-pass": AISWEB_API_PASS
+    }
+
+    url = f"{AISWEB_BASE}/?icao={icao}&api=metar,taf"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json()
 # ================== EVENTS ==================
 @client.event
 async def on_ready():
@@ -244,6 +261,34 @@ async def event_remove(interaction: discord.Interaction, event_id: int, position
                 await interaction.response.send_message("❌ You are not signed up for this position. (ERR007)", ephemeral=True)
                 return
     await interaction.response.send_message("❌ Event not found. (ERR008)", ephemeral=True)
+
+@tree.command(name="weather", description="Get METAR/TAF for an airport")
+async def weather(interaction: discord.Interaction, icao: str):
+    await interaction.response.defer()
+
+    data = await fetch_weather(icao.upper())
+
+    if not data:
+        await interaction.followup.send(
+            f"❌ Could not fetch weather for {icao.upper()} (ERR010)"
+        )
+        return
+
+    # ---- extract safely (API structure may vary slightly) ----
+    metar = data.get("metar", "No METAR available")
+    taf = data.get("taf", "No TAF available")
+
+    embed = discord.Embed(
+        title=f"🌦️ Weather Report — {icao.upper()}",
+        color=0x08B4CA
+    )
+
+    embed.add_field(name="METAR", value=f"```{metar}```", inline=False)
+    embed.add_field(name="TAF", value=f"```{taf}```", inline=False)
+
+    embed.set_footer(text=FOOTER_TEXT)
+
+    await interaction.followup.send(embed=embed)
 
 # ================== ERROR HANDLER ==================
 @tree.error
