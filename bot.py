@@ -313,22 +313,7 @@ async def weather(interaction: discord.Interaction, icao: str):
     except Exception as e:
         await interaction.followup.send(
             f"❌ Weather system error (ERR012)\n```{e}```"
-        )    # ---- extract safely (API structure may vary slightly) ----
-    metar = data.get("metar", "No METAR available")
-    taf = data.get("taf", "No TAF available")
-
-    embed = discord.Embed(
-        title=f"🌦️ Weather Report — {icao.upper()}",
-        color=0x08B4CA
-    )
-
-    embed.add_field(name="METAR", value=f"```{metar}```", inline=False)
-    embed.add_field(name="TAF", value=f"```{taf}```", inline=False)
-
-    embed.set_footer(text=FOOTER_TEXT)
-
-    await interaction.followup.send(embed=embed)
-
+       
 # ================== ERROR HANDLER ==================
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
