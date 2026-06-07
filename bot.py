@@ -313,7 +313,7 @@ async def weather(interaction: discord.Interaction, icao: str):
     except Exception as e:
         await interaction.followup.send(
             f"❌ Weather system error (ERR012)\n```{e}```"
-       
+        )
 # ================== ERROR HANDLER ==================
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
