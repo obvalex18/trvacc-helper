@@ -264,16 +264,47 @@ async def event_remove(interaction: discord.Interaction, event_id: int, position
 
 @tree.command(name="weather", description="Get METAR/TAF for an airport")
 async def weather(interaction: discord.Interaction, icao: str):
+
     await interaction.response.defer()
 
-    data = await fetch_weather(icao.upper())
+    try:
+        url = f"http://www.aisweb.aer.mil.br/api/?icao={icao.upper()}"
 
-    if not data:
-        await interaction.followup.send(
-            f"❌ Could not fetch weather for {icao.upper()} (ERR010)"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                text = await resp.text()
+
+                if resp.status != 200:
+                    return await interaction.followup.send(
+                        f"❌ API error ({resp.status}) (ERR010)"
+                    )
+
+        # Try JSON first
+        try:
+            data = json.loads(text)
+        except:
+            return await interaction.followup.send(
+                f"❌ Invalid API response (ERR011)\n```{text[:300]}```"
+            )
+
+        metar = data.get("metar", "N/A")
+        taf = data.get("taf", "N/A")
+
+        embed = discord.Embed(
+            title=f"🌦️ Weather — {icao.upper()}",
+            color=0x08B4CA
         )
-        return
 
+        embed.add_field(name="METAR", value=f"```{metar}```", inline=False)
+        embed.add_field(name="TAF", value=f"```{taf}```", inline=False)
+        embed.set_footer(text=FOOTER_TEXT)
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Unexpected error (ERR012)\n```{e}```"
+        )
     # ---- extract safely (API structure may vary slightly) ----
     metar = data.get("metar", "No METAR available")
     taf = data.get("taf", "No TAF available")
@@ -294,11 +325,13 @@ async def weather(interaction: discord.Interaction, icao: str):
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
     logging.error(error)
-    if interaction.response.is_done():
-        await interaction.followup.send("❌ An error occurred. (ERR009)", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ An error occurred. (ERR009)", ephemeral=True)
 
+    msg = f"❌ Error: `{type(error).__name__}`\n```{str(error)}```"
+
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
 # ================== RUN ==================
 if __name__ == "__main__":
     client.run(BOT_TOKEN)
